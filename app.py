@@ -15,16 +15,31 @@ flask_ngrok ->  To make the Flask apps running on localhost available over the i
 tensorflow  ->  To load the trained model and to get the predicted result.
 GoogleNews  ->  To get the news result on a particular date, location, Country.   
 """
-import flask
+from cgitb import text
+import pickle
+import requests
+from bs4 import BeautifulSoup as soup
 from flask import Flask, request, render_template
 import tensorflow as tf
-from GoogleNews import GoogleNews as gn
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 #Loaded the trained NLP classification model to get the crime rate of the news
 model = tf.keras.models.load_model('./model_news.h5')
-import pickle
+
 with open('./tokenizer.pickle', 'rb') as handle:
     vec= pickle.load(handle)
+
+
+def getNewsData(data):
+  data = data.replace(' ','%20')
+  link = "https://news.google.com/search?q={}&hl=en-IN&gl=IN&ceid=IN%3Aen".format(data)
+  resp=requests.request(method="GET",url=link)
+  soup_parser = soup(resp.text, "html.parser")
+  ls = soup_parser.find_all("a", class_="DY5T1d")[:50]
+  data=[]
+  for i in ls:
+        data.append([i.text[:500],'https://news.google.com'+i.get('href')[1:]])
+  return data
+
 app=Flask(__name__)
 
 @app.route('/')
@@ -43,46 +58,28 @@ def news():
     end_date=end_date[3:5]+"-"+end_date[5:]+"-"+end_date[:3]
     start_date=start_date[3:]+start_date[0]
     end_date=end_date[3:]+end_date[0]
-    
-    #Used Googlenews package to get news based on entered details
-    goog = gn(country)# to set the GoogleNews for a particular country
-    goog.set_lang('en')#to set the GoogleNoews to English language
-    goog.set_time_range(start_date,end_date)# to set the GoogleNews for a particular language
-    goog.search(str(location)+' crime woman')# to set the GoogleNews for a particular location
-    result=goog.results() #Get the searched result
-    
-    predicted={}
-    pred=[]
-    var_link={}
-    for i in result:#To predict the correct crime rate for the particular news result 
-        txt=[str(i['title'])]
-        txt1=str(i['link'])
-        key = vec.texts_to_sequences(txt)
-        key = pad_sequences(key, maxlen=10, padding='post', truncating='post')
-        if txt != ['']:
-            f=model.predict(key)[0][0]*100
-            predicted[str(i['title'])]=f
-            var_link[str(i['title'])]=txt1
-            pred.append(round(f,2))
-            
-    #To arrange the value in descending order based on crime rate to get the dangerous crime first 
-    predicted=dict(sorted(predicted.items(), key=lambda item: item[1],reverse=True))
-    predicted=list(predicted.keys())
-    pred=sorted(pred,reverse=True)
-    print(pred)
+    head={}
+    link={}
     color=[]
-    link=[]
-    for i in range(len(predicted)):
-        link.append(var_link[predicted[i]])
-    for i in range(len(pred)):
-        if pred[i]>=75:
+    for data in getNewsData(location+" crime against woman"):#To predict the correct crime rate for the particular news result 
+        if data[0] != ['']:
+            key = pad_sequences(vec.texts_to_sequences(data[0]), maxlen=10, padding='post', truncating='post')
+            res = model.predict(key)[0][0]*100
+            head[res] = data[0]
+            link[res] = data[1]
+    print()
+    
+    head = dict(sorted(head.items(), key=lambda item: item[0],reverse=True))
+    link = dict(sorted(link.items(), key=lambda item: item[0],reverse=True))
+    for i in list(head.keys()):
+        if i>=75:
             color.append('red')
-        elif pred[i]>=50 and pred[i]<75:
+        elif i>=50 and i<75:
             color.append('orange')
         else:
             color.append('Green')
             
     #To display the predicted output in output.html
-    return render_template('output.html',a=predicted,leng=len(predicted),pred=pred,col=color,link=link)
+    return render_template('output.html',a=list(head.values()),leng=len(head),pred=list(head.keys()),col=color,link=list(link.values()))
 if __name__== '__main__':
-    app.run()
+    app.run(debug=True)
